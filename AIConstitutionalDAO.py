@@ -6,26 +6,21 @@ import json
 
 class AIConstitutionalDAO(gl.Contract):
     constitution: str
-    owner: str
     active_proposal: str
     proposal_status: str
-    proposer: str
 
     def __init__(self, constitution: str):
         # 1. Precommitted Rules: تحديد الدستور عند النشر ولا يمكن تغييره
         self.constitution = constitution
-        self.owner = gl.message.sender
         self.active_proposal = ""
         self.proposal_status = "NONE"
-        self.proposer = ""
 
     @gl.public.write
     def submit_proposal(self, proposal_text: str) -> str:
-        # 2. Access/State Control: منع إغراق العقد بمقترحات جديدة إذا كان هناك مقترح نشط
+        # 2. State Control: منع إغراق العقد بمقترحات جديدة إذا كان هناك مقترح نشط
         if self.proposal_status == "ACTIVE":
             raise gl.vm.UserError("An active proposal is already awaiting manual voting.")
 
-        caller = gl.message.sender
         dao_rules = self.constitution
 
         # 3. Non-deterministic block with Explicit Failure Handling
@@ -60,8 +55,7 @@ class AIConstitutionalDAO(gl.Contract):
         if consensus_result.get("error"):
             raise gl.vm.UserError(f"Proposal evaluation failed: {consensus_result.get('reason')}")
 
-        # تحديث حالة العقد وتوثيق عنوان مقدم المقترح
-        self.proposer = caller
+        # تحديث حالة العقد
         self.active_proposal = proposal_text
 
         if consensus_result["is_constitutional"]:
