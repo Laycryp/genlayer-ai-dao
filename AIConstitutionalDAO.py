@@ -8,28 +8,33 @@ class AIConstitutionalDAO(gl.Contract):
     constitution: str
     active_proposal: str
     proposal_status: str
+    # استخدام u256 بدلاً من int
+    votes_for: u256
+    votes_against: u256
+    # استخدام str بدلاً من list لتجنب أخطاء التخزين
+    voters: str
 
     def __init__(self, constitution: str):
-        # 1. Precommitted Rules: تحديد الدستور عند النشر ولا يمكن تغييره
         self.constitution = constitution
         self.active_proposal = ""
         self.proposal_status = "NONE"
+        # التهيئة بقيمة u256(0)
+        self.votes_for = u256(0)
+        self.votes_against = u256(0)
+        self.voters = ""
 
     @gl.public.write
     def submit_proposal(self, proposal_text: str) -> str:
-        # 2. State Control: منع إغراق العقد بمقترحات جديدة إذا كان هناك مقترح نشط
         if self.proposal_status == "ACTIVE":
-            raise gl.vm.UserError("An active proposal is already awaiting manual voting.")
+            raise gl.vm.UserError("An active proposal is already awaiting resolution. Resolve it first.")
 
         dao_rules = self.constitution
 
-        # 3. Non-deterministic block with Explicit Failure Handling
         def evaluate_constitutionality() -> dict:
             task = f"""
-            You are the strict AI guardian of a Decentralized Autonomous Organization (DAO).
-            The DAO's immutable constitution is: "{dao_rules}"
-            
-            A member has submitted the following proposal: "{proposal_text}"
+            You are the strict AI guardian of a DAO.
+            Immutable constitution: "{dao_rules}"
+            Proposed action: "{proposal_text}"
             
             Does this proposal violate any rules or the core spirit of the constitution?
             
@@ -49,22 +54,61 @@ class AIConstitutionalDAO(gl.Contract):
             except Exception:
                 return {"is_constitutional": False, "error": True, "reason": "LLM execution or parsing failed."}
 
-        # 4. Strict Consensus
         consensus_result = gl.eq_principle.strict_eq(evaluate_constitutionality)
 
         if consensus_result.get("error"):
             raise gl.vm.UserError(f"Proposal evaluation failed: {consensus_result.get('reason')}")
 
-        # تحديث حالة العقد
         self.active_proposal = proposal_text
+        self.votes_for = u256(0)
+        self.votes_against = u256(0)
+        self.voters = ""
 
         if consensus_result["is_constitutional"]:
             self.proposal_status = "ACTIVE"
             return f"Proposal ACCEPTED for voting. Reason: {consensus_result.get('reason')}"
         else:
-            self.proposal_status = "REJECTED"
+            self.proposal_status = "REJECTED_BY_AI"
             return f"Proposal REJECTED by AI Guardian. Reason: {consensus_result.get('reason')}"
 
+    @gl.public.write
+    def cast_vote(self, voter_address: str, support: bool) -> str:
+        if self.proposal_status != "ACTIVE":
+            raise gl.vm.UserError("No active proposal to vote on.")
+            
+        # التحقق من أن العنوان لم يصوت مسبقاً
+        if voter_address in self.voters:
+            raise gl.vm.UserError("Voter has already cast a vote.")
+            
+        self.voters += voter_address + ","
+        
+        if support:
+            self.votes_for += u256(1)
+        else:
+            self.votes_against += u256(1)
+            
+        return f"Vote cast successfully by {voter_address}."
+
+    @gl.public.write
+    def resolve_proposal(self) -> str:
+        if self.proposal_status != "ACTIVE":
+            raise gl.vm.UserError("No active proposal to resolve.")
+            
+        total_votes = self.votes_for + self.votes_against
+        if total_votes == u256(0):
+            self.proposal_status = "REJECTED_BY_VOTERS"
+            return "Proposal rejected due to lack of votes."
+            
+        if self.votes_for > self.votes_against:
+            self.proposal_status = "PASSED"
+            return "Proposal passed by majority vote."
+        else:
+            self.proposal_status = "REJECTED_BY_VOTERS"
+            return "Proposal rejected by majority vote."
+
     @gl.public.view
-    def get_proposal_status(self) -> str:
-        return self.proposal_status
+    def get_proposal_status(self) -> dict:
+        return {
+            "proposal": self.active_proposal,
+            "status": self.proposal_status
+        }
