@@ -8,20 +8,17 @@ class AIConstitutionalDAO(gl.Contract):
     constitution: str
     active_proposal: str
     proposal_status: str
-    # استخدام u256 بدلاً من int
     votes_for: u256
     votes_against: u256
-    # استخدام str بدلاً من list لتجنب أخطاء التخزين
-    voters: str
+    voters_json: str  # تخزين القائمة كـ JSON String لتجاوز قيود GenVM وضمان التطابق الدقيق
 
     def __init__(self, constitution: str):
         self.constitution = constitution
         self.active_proposal = ""
         self.proposal_status = "NONE"
-        # التهيئة بقيمة u256(0)
         self.votes_for = u256(0)
         self.votes_against = u256(0)
-        self.voters = ""
+        self.voters_json = "[]"
 
     @gl.public.write
     def submit_proposal(self, proposal_text: str) -> str:
@@ -62,7 +59,7 @@ class AIConstitutionalDAO(gl.Contract):
         self.active_proposal = proposal_text
         self.votes_for = u256(0)
         self.votes_against = u256(0)
-        self.voters = ""
+        self.voters_json = "[]"
 
         if consensus_result["is_constitutional"]:
             self.proposal_status = "ACTIVE"
@@ -71,23 +68,29 @@ class AIConstitutionalDAO(gl.Contract):
             self.proposal_status = "REJECTED_BY_AI"
             return f"Proposal REJECTED by AI Guardian. Reason: {consensus_result.get('reason')}"
 
+    # إزالة إدخال العنوان يدوياً والاعتماد على gl.message.sender
     @gl.public.write
-    def cast_vote(self, voter_address: str, support: bool) -> str:
+    def cast_vote(self, support: bool) -> str:
         if self.proposal_status != "ACTIVE":
             raise gl.vm.UserError("No active proposal to vote on.")
             
-        # التحقق من أن العنوان لم يصوت مسبقاً
-        if voter_address in self.voters:
+        # 1. Verifiable Caller Identity
+        caller = gl.message.sender
+        
+        # 2. Exact Membership Semantics
+        voters_list = json.loads(self.voters_json)
+        if caller in voters_list:
             raise gl.vm.UserError("Voter has already cast a vote.")
             
-        self.voters += voter_address + ","
+        voters_list.append(caller)
+        self.voters_json = json.dumps(voters_list)
         
         if support:
             self.votes_for += u256(1)
         else:
             self.votes_against += u256(1)
             
-        return f"Vote cast successfully by {voter_address}."
+        return f"Vote cast successfully by {caller}."
 
     @gl.public.write
     def resolve_proposal(self) -> str:
